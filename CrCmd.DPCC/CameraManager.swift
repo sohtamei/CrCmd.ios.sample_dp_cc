@@ -11,6 +11,8 @@ final class CameraManager: NSObject {
 
     private let browser = ICDeviceBrowser()
     private var camera: ICCameraDevice?
+    private var ptpIPConnection: PTPIPConnection?
+    private var activeConnectionMode: CameraConnectionMode = .usb
 
     private var cameraStatus: String = ""
     private var dpParams: [Param] = []
@@ -60,6 +62,29 @@ final class CameraManager: NSObject {
         camera.requestOpenSession()
     }
 
+    private func openIPSession(host: String, completion: ((Bool) -> Void)?) {
+        let connection = PTPIPConnection(host: host, port: 15740)
+        connection.onLog = { [weak self] line in
+            self?.log(line)
+        }
+        connection.onEvent = { [weak self] eventData in
+            self?.handlePTPEvent(eventData)
+        }
+        ptpIPConnection = connection
+
+        log("PTP-IP connect -> \(host):15740")
+        connection.connect { [weak self] result in
+            guard let self else { return }
+            if result {
+                self.updateCameraName(host)
+                self.updateStatus("disconnected")
+            } else {
+                self.ptpIPConnection = nil
+            }
+            completion?(result)
+        }
+    }
+
     private func closeSession(_ completion: ((Bool) -> Void)?) {
         guard let camera else {
             log("closeSession(): no camera")
@@ -72,6 +97,14 @@ final class CameraManager: NSObject {
         camera.requestCloseSession()
     }
 
+    private func closeIPSession(_ completion: ((Bool) -> Void)?) {
+        ptpIPConnection?.disconnect()
+        ptpIPConnection = nil
+        updateCameraName("(none)")
+        updateStatus("disconnected")
+        completion?(true)
+    }
+
     func sendCommand(opCode: PTP_OC, params: [UInt32], outData: Data?) {
         sendCommand(opCode: opCode, params: params, outData: outData, completion: nil)
     }
@@ -79,6 +112,22 @@ final class CameraManager: NSObject {
     func sendCommand(opCode: PTP_OC, params: [UInt32], outData: Data?,
                      completion: ((Bool, Data?) -> Void)?)
     {
+        if activeConnectionMode == .ip {
+            guard let ptpIPConnection else {
+                log("sendCommand(): no PTP-IP connection")
+                completion?(false, nil)
+                return
+            }
+
+            ptpIPConnection.sendOperation(opCode: opCode.rawValue, params: params, outData: outData) { [weak self] result, inData in
+                if !result {
+                    self?.log("PTP-IP operation failed: 0x\(self?.hex16(opCode.rawValue) ?? "0000")")
+                }
+                completion?(result, inData)
+            }
+            return
+        }
+
         guard let camera else {
             log("sendCommand(): no camera")
             completion?(false, nil)
@@ -125,10 +174,20 @@ final class CameraManager: NSObject {
         }
     }
 
-    func connectSequence(completion: ((Bool) -> Void)?) {
+    func connectSequence(mode: CameraConnectionMode, ipAddress: String, completion: ((Bool) -> Void)?) {
         log("connectSequence(): begin")
+        activeConnectionMode = mode
 
-        openSession() { [weak self] result in
+        let open: (@escaping (Bool) -> Void) -> Void = { [weak self] done in
+            switch mode {
+            case .usb:
+                self?.openSession(done)
+            case .ip:
+                self?.openIPSession(host: ipAddress, completion: done)
+            }
+        }
+
+        open { [weak self] result in
             guard let self, result else { completion?(false); return }
 
             self.sendCommand(opCode: PTP_OC.SDIO_Connect, params: [1,0,0], outData: nil) { [weak self] result, inData in
@@ -159,7 +218,12 @@ final class CameraManager: NSObject {
 
     func disconnectSequence(completion: ((Bool) -> Void)?) {
         log("disconnectSequence(): begin")
-        closeSession(completion)
+        switch activeConnectionMode {
+        case .usb:
+            closeSession(completion)
+        case .ip:
+            closeIPSession(completion)
+        }
     }
 
     func getAllDP() {
@@ -637,6 +701,19 @@ final class CameraManager: NSObject {
         onLog?(text)
     }
 
+    fileprivate func handlePTPEvent(_ eventData: Data) {
+        do {
+            let parsed = try PTPParser.parseContainer(eventData)
+            guard let event_enum = PTP_SDIE(rawValue: parsed.code) else { return }
+            log("e-\(hex16(parsed.code)):\(String(describing: event_enum)) [\(parsed.params.map {String($0)}.joined(separator: ","))]")
+            if parsed.code == PTP_SDIE.DevicePropChanged.rawValue {
+                getAllDP()
+            }
+        } catch {
+            log("PTP EVENT PARSE ERROR: \(error)")
+        }
+    }
+
     fileprivate func hex16(_ value: UInt16) -> String {
         String(format: "%04X", value)
     }
@@ -775,17 +852,6 @@ extension CameraManager: ICDeviceDelegate, ICCameraDeviceDelegate {
 
     func cameraDevice(_ camera: ICCameraDevice, didReceivePTPEvent eventData: Data) {
         //log("PTP EVENT RAW \(eventData.hexDump())")
-
-        do {
-            let parsed = try PTPParser.parseContainer(eventData)
-            guard let event_enum = PTP_SDIE(rawValue: parsed.code) else { return }
-            //log("PTP EVENT PARSED type=0x\(hex16(parsed.type)) code=0x\(hex16(parsed.code)) txid=\(parsed.transactionID) params=[\(parsed.params.map { "0x" + hex32($0) }.joined(separator: ", "))]")
-            log("e-\(hex16(parsed.code)):\(String(describing: event_enum)) [\(parsed.params.map {String($0)}.joined(separator: ","))]")
-			if parsed.code == PTP_SDIE.DevicePropChanged.rawValue {
-                getAllDP()
-            }
-        } catch {
-            log("PTP EVENT PARSE ERROR: \(error)")
-        }
+        handlePTPEvent(eventData)
     }
 }

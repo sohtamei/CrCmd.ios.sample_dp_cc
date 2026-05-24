@@ -3,6 +3,13 @@ import Combine
 import SwiftUI
 import UIKit
 
+enum CameraConnectionMode: String, CaseIterable, Identifiable {
+    case usb = "USB"
+    case ip = "IP"
+
+    var id: String { rawValue }
+}
+
 final class CameraViewModel: ObservableObject {
 
     // 1st line
@@ -12,6 +19,8 @@ final class CameraViewModel: ObservableObject {
 
     // 2nd line
 	@Published var isLiveview = false
+    @Published var connectionMode: CameraConnectionMode = .usb
+    @Published var ipAddress: String = ""
 
     // 3rd line
     @Published var codeHex: String = "5007"
@@ -53,7 +62,10 @@ final class CameraViewModel: ObservableObject {
     }
 
     func connect() {
-        manager.connectSequence() { result in
+        let mode = connectionMode
+        let host = ipAddress.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        manager.connectSequence(mode: mode, ipAddress: host) { result in
 			if result {
 			    DispatchQueue.main.async {
 	                self.cameraStatus = "connected"
@@ -125,6 +137,15 @@ final class CameraViewModel: ObservableObject {
     	DispatchQueue.main.async { self.modeInput = _modeInput }
 		return text
 	}
+
+    var canConnect: Bool {
+        switch connectionMode {
+        case .usb:
+            return cameraName != "(none)"
+        case .ip:
+            return !ipAddress.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+    }
 
     func updateDPCC() {
 		guard let text = updateDPCC_work() else { return }

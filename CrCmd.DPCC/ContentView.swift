@@ -18,6 +18,31 @@ struct ContentView: View {
             GroupBox("Camera - DP,CC") {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
+                        Picker("Connection", selection: $vm.connectionMode) {
+                            ForEach(CameraConnectionMode.allCases) { mode in
+                                Text(mode.rawValue).tag(mode)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .frame(width: 150)
+                        .disabled(vm.cameraStatus == "connected")
+
+                        if vm.connectionMode == .ip {
+                            Text("IP")
+                            TextField("192.168.0.1", text: $vm.ipAddress)
+                                .textFieldStyle(.roundedBorder)
+                                .keyboardType(.numbersAndPunctuation)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                                .frame(width: 150)
+                                .disabled(vm.cameraStatus == "connected")
+
+                            Text(":15740")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    HStack {
 				        VStack(alignment: .leading) {
 		                    HStack {
 								Button {
@@ -25,14 +50,14 @@ struct ContentView: View {
 								} label: {
 								    Text("connect")
 								        .foregroundColor(
-								        	vm.cameraName == "(none)" ? .gray :
+								        	!vm.canConnect ? .gray :
 								        	(vm.cameraStatus == "connected") ? .white : .primary)
 								        .frame(width: 80, height: 32)
 								        .background(
 								            Capsule()
 								                .fill((vm.cameraStatus == "connected") ? Color.blue : Color(.systemBackground))
 								        )
-								}.disabled(vm.cameraName == "(none)")
+								}.disabled(!vm.canConnect)
 
 		                        Text(vm.cameraName + (vm.cameraName == "(none)" ? "": " - " + vm.cameraStatus))
 							}

@@ -20,7 +20,7 @@ final class CameraViewModel: ObservableObject {
     // 2nd line
 	@Published var isLiveview = false
     @Published var connectionMode: CameraConnectionMode = .usb
-    @Published var ipAddress: String = ""
+    @Published var ipAddress: String = "192.168.1.xx"
 
     // 3rd line
     @Published var codeHex: String = "5007"
@@ -37,6 +37,7 @@ final class CameraViewModel: ObservableObject {
 
     private let manager = CameraManager()
     private var lvTimer: Timer?
+    private var isLiveviewBusy = false
 
     init() {
         manager.onCameraNameChanged = { [weak self] name in
@@ -97,17 +98,22 @@ final class CameraViewModel: ObservableObject {
     func stopTimer() {
         lvTimer?.invalidate()
         lvTimer = nil
+        isLiveviewBusy = false
     }
 
     private func targetFunc() {
-        if isLiveview {
-			manager.liveview() { result, lvData in
-				if result {
-					guard let lvData else { return }
-			    	DispatchQueue.main.async { self.jpegData = lvData }
-				}
-				return
-			}
+        guard isLiveview, !isLiveviewBusy else { return }
+
+        isLiveviewBusy = true
+		manager.liveview() { [weak self] result, lvData in
+		    DispatchQueue.main.async {
+		        guard let self else { return }
+		        self.isLiveviewBusy = false
+
+		        guard self.isLiveview, result, let lvData else { return }
+                self.jpegData = lvData
+		    }
+			return
 		}
     }
 

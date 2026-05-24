@@ -18,31 +18,6 @@ struct ContentView: View {
             GroupBox("Camera - DP,CC") {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
-                        Picker("Connection", selection: $vm.connectionMode) {
-                            ForEach(CameraConnectionMode.allCases) { mode in
-                                Text(mode.rawValue).tag(mode)
-                            }
-                        }
-                        .pickerStyle(.segmented)
-                        .frame(width: 150)
-                        .disabled(vm.cameraStatus == "connected")
-
-                        if vm.connectionMode == .ip {
-                            Text("IP")
-                            TextField("192.168.0.1", text: $vm.ipAddress)
-                                .textFieldStyle(.roundedBorder)
-                                .keyboardType(.numbersAndPunctuation)
-                                .textInputAutocapitalization(.never)
-                                .autocorrectionDisabled()
-                                .frame(width: 150)
-                                .disabled(vm.cameraStatus == "connected")
-
-                            Text(":15740")
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-
-                    HStack {
 				        VStack(alignment: .leading) {
 		                    HStack {
 								Button {
@@ -58,6 +33,25 @@ struct ContentView: View {
 								                .fill((vm.cameraStatus == "connected") ? Color.blue : Color(.systemBackground))
 								        )
 								}.disabled(!vm.canConnect)
+
+		                        Picker("Connection", selection: $vm.connectionMode) {
+		                            ForEach(CameraConnectionMode.allCases) { mode in
+		                                Text(mode.rawValue).tag(mode)
+		                            }
+		                        }
+		                        .pickerStyle(.segmented)
+		                        .frame(width: 100)
+		                        .disabled(vm.cameraStatus == "connected")
+
+		                        if (vm.connectionMode == .ip) && (vm.cameraStatus != "connected") {
+		                            TextField("192.168.1.xx", text: $vm.ipAddress)
+		                                .textFieldStyle(.roundedBorder)
+		                                .keyboardType(.numbersAndPunctuation)
+		                                .textInputAutocapitalization(.never)
+		                                .autocorrectionDisabled()
+		                                .frame(width: 130)
+		                                .disabled(vm.cameraStatus == "connected")
+		                        }
 
 		                        Text(vm.cameraName + (vm.cameraName == "(none)" ? "": " - " + vm.cameraStatus))
 							}
@@ -113,6 +107,9 @@ struct ContentView: View {
 	                        Text("code 0x")
 				            TextField("0000", text: $vm.codeHex)
 				                .textFieldStyle(.roundedBorder)
+                                .keyboardType(.numbersAndPunctuation)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
 				                .focused($isTextFieldFocused)
 				                .frame(width: 80)
 					            .onSubmit {
@@ -175,6 +172,9 @@ struct ContentView: View {
 
 	                        TextField("0000", text: $vm.dpSetVal)
 				                .textFieldStyle(.roundedBorder)
+                                .keyboardType(.numbersAndPunctuation)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
 				                .frame(width: 100)
 				                .onSubmit {
 				                	vm.setDPCC()

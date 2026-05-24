@@ -26,6 +26,13 @@ final class PTPIPConnection {
         var inData = Data()
     }
 
+    private struct QueuedOperation {
+        let opCode: UInt16
+        let params: [UInt32]
+        let outData: Data?
+        let completion: (Bool, Data?) -> Void
+    }
+
     private let host: String
     private let port: UInt16
     private let queue = DispatchQueue(label: "PTPIPConnection.queue")
@@ -38,6 +45,7 @@ final class PTPIPConnection {
     private var connectionNumber: UInt32 = 0
     private var nextTransactionID: UInt32 = 1
     private var pendingOperation: PendingOperation?
+    private var operationQueue: [QueuedOperation] = []
     private var operationTimeout: DispatchWorkItem?
 
     init(host: String, port: UInt16) {
@@ -67,34 +75,14 @@ final class PTPIPConnection {
 
     func sendOperation(opCode: UInt16, params: [UInt32], outData: Data?, completion: @escaping (Bool, Data?) -> Void) {
         queue.async {
+            let operation = QueuedOperation(opCode: opCode, params: params, outData: outData, completion: completion)
+
             guard self.pendingOperation == nil else {
-                self.log("PTP-IP busy")
-                completion(false, nil)
+                self.operationQueue.append(operation)
                 return
             }
 
-            guard let commandConnection = self.commandConnection else {
-                self.log("PTP-IP command connection is closed")
-                completion(false, nil)
-                return
-            }
-
-            let transactionID = self.nextTransactionID
-            self.nextTransactionID += 1
-            self.pendingOperation = PendingOperation(transactionID: transactionID, completion: completion)
-            self.scheduleOperationTimeout(transactionID: transactionID)
-
-            let request = self.makeOperationRequest(opCode: opCode, transactionID: transactionID, params: params, hasOutData: outData != nil)
-            commandConnection.send(content: request, completion: .contentProcessed { [weak self] error in
-                guard let self else { return }
-                if let error {
-                    self.finishOperation(false, nil, "PTP-IP send operation failed: \(error.localizedDescription)")
-                    return
-                }
-
-                guard let outData else { return }
-                self.sendOutData(outData, transactionID: transactionID)
-            })
+            self.startOperation(operation)
         }
     }
 
@@ -118,7 +106,9 @@ final class PTPIPConnection {
                 case .ready:
                     self.log("PTP-IP command channel ready")
                     self.receiveCommand()
-                    connection.send(content: self.makeInitCommandRequest(), completion: .contentProcessed { [weak self] error in
+                    let data = self.makeInitCommandRequest()
+                    //self.log("1:\(data.hexDump())")
+                    connection.send(content: data, completion: .contentProcessed { [weak self] error in
                         if let error {
                             self?.failConnect("PTP-IP init command failed: \(error.localizedDescription)")
                         }
@@ -148,7 +138,9 @@ final class PTPIPConnection {
                 case .ready:
                     self.log("PTP-IP event channel ready")
                     self.receiveEvent()
-                    connection.send(content: self.makeInitEventRequest(), completion: .contentProcessed { [weak self] error in
+                    let data = self.makeInitEventRequest()
+                    //self.log("3:\(data.hexDump())")
+                    connection.send(content: data, completion: .contentProcessed { [weak self] error in
                         if let error {
                             self?.failConnect("PTP-IP init event failed: \(error.localizedDescription)")
                         }
@@ -168,6 +160,7 @@ final class PTPIPConnection {
             guard let self else { return }
             self.queue.async {
                 if let data {
+                    //self.log("r:\(data.hexDump())")
                     self.commandBuffer.append(data)
                     self.drainCommandPackets()
                 }
@@ -192,6 +185,7 @@ final class PTPIPConnection {
             guard let self else { return }
             self.queue.async {
                 if let data {
+                    //self.log("e:\(data.hexDump())")
                     self.eventBuffer.append(data)
                     self.drainEventPackets()
                 }
@@ -343,6 +337,7 @@ final class PTPIPConnection {
         let completion = pendingOperation?.completion
         pendingOperation = nil
         completion?(result, inData)
+        startNextOperation()
     }
 
     private func scheduleOperationTimeout(transactionID: UInt32) {
@@ -364,6 +359,48 @@ final class PTPIPConnection {
         operationTimeout?.cancel()
         operationTimeout = nil
         pendingOperation = nil
+        let queuedOperations = operationQueue
+        operationQueue.removeAll()
+        queuedOperations.forEach { $0.completion(false, nil) }
+    }
+
+    private func startOperation(_ operation: QueuedOperation) {
+        guard let commandConnection = commandConnection else {
+            log("PTP-IP command connection is closed")
+            operation.completion(false, nil)
+            startNextOperation()
+            return
+        }
+
+        let transactionID = nextTransactionID
+        nextTransactionID += 1
+        pendingOperation = PendingOperation(transactionID: transactionID, completion: operation.completion)
+        scheduleOperationTimeout(transactionID: transactionID)
+
+        let request = makeOperationRequest(
+            opCode: operation.opCode,
+            transactionID: transactionID,
+            params: operation.params,
+            hasOutData: operation.outData != nil
+        )
+        //log("6:\(request.hexDump())")
+        commandConnection.send(content: request, completion: .contentProcessed { [weak self] error in
+            guard let self else { return }
+            if let error {
+                self.finishOperation(false, nil, "PTP-IP send operation failed: \(error.localizedDescription)")
+                return
+            }
+
+            guard let outData = operation.outData else { return }
+            self.sendOutData(outData, transactionID: transactionID)
+        })
+    }
+
+    private func startNextOperation() {
+        guard commandConnection != nil, pendingOperation == nil, !operationQueue.isEmpty else { return }
+
+        let operation = operationQueue.removeFirst()
+        startOperation(operation)
     }
 
     private func failConnect(_ message: String) {
@@ -389,6 +426,7 @@ final class PTPIPConnection {
         appendUInt32LE(transactionID, to: &end)
         end.append(outData)
 
+        //log("9:\(start.hexDump())")
         commandConnection.send(content: start, completion: .contentProcessed { [weak self] error in
             guard let self else { return }
             if let error {
@@ -396,6 +434,7 @@ final class PTPIPConnection {
                 return
             }
 
+            //log("c:\(end.hexDump())")
             commandConnection.send(content: end, completion: .contentProcessed { [weak self] error in
                 if let error {
                     self?.finishOperation(false, nil, "PTP-IP end data failed: \(error.localizedDescription)")

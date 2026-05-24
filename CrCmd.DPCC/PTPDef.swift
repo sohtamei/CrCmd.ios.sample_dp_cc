@@ -998,7 +998,7 @@ enum DPC: UInt16 {
     case Video_Rec_Format_Bitrate_Setting = 0xE067
     case Valid_Rec_Video_Format = 0xE068
     case Monitoring_Output_Format = 0xE06C
-    case AF_Area_Position_x,y_AF_C = 0xE079
+    case AF_Area_Position_xy_AF_C = 0xE079
     case Image_Stabilization_Level_Movie = 0xE080
     case Control_General_SettingFile_Enable_Status = 0xE081
     case Movie_Trimming_Transfer_Support_Information = 0xE082
